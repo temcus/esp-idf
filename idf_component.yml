@@ -1,0 +1,7 @@
+version: "0.0.1"
+description: Small binary-diff OTA updates
+url: https://github.com/temcus/esp-sif
+dependencies:
+  idf: ">=4.3"
+  temcus/esp-detools:
+    git: ssh://git@github.com/temcus/esp-detools.git
