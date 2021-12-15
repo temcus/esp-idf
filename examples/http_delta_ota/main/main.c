@@ -46,9 +46,9 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
     int remaining = content_length;
     int64_t start = esp_timer_get_time();
 
-    delta_opts_t opts = INIT_DEFAULT_DELTA_OPTS();
+    delta_opts_t opts = INIT_NEXT_OTA_PARTITION_DELTA_OPTS();
 
-    delta_partition_writer_t writer;
+    delta_patch_writer_t *writer = NULL;
 
     size_t count = 0;
     while (remaining > 0) {
@@ -60,11 +60,15 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
             goto ERROR;
         }
 
-        if (count == 0 && delta_partition_init(&writer, opts.patch, content_length) != ESP_OK) {
-            goto ERROR;
-        }
+		if (!writer) {
+        	int err = delta_patch_init(&writer, opts.patch.where, content_length);
+			if (err != DELTA_OK) {
+        		ESP_LOGE(TAG, "Error: %s", delta_error_as_string(err));
+				goto ERROR;
+			}
+		}
 
-        if (delta_partition_write(&writer, recv_buf, ret) != ESP_OK) {
+        if (delta_patch_write(writer, recv_buf, ret) != ESP_OK) {
             goto ERROR;
         };
 
@@ -74,25 +78,27 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
         ESP_LOGI(TAG, "Download Progress: %0.2f %%", ((float)(content_length - remaining) / content_length) * 100);
     }
 
-    free(recv_buf);
-
     ESP_LOGI(TAG, "Time taken to download patch: %0.3f s", (float)(esp_timer_get_time() - start) / 1000000L);
     ESP_LOGI(TAG, "Ready to apply patch...");
     ESP_LOGI(TAG, "Patch size: %uKB", count/1024);
 
     ESP_LOGI(TAG, "---------------- detools ----------------");
-    int err = delta_check_and_apply(content_length, &opts);
+    int err = delta_check_and_apply(content_length, &opts, NULL);
     if (err) {
         ESP_LOGE(TAG, "Error: %s", delta_error_as_string(err));
         goto ERROR;
     }
 
     httpd_resp_send(req, NULL, 0);
+    free(recv_buf);
+	delta_patch_free(writer);
     reboot();
     return ESP_OK;
 
 ERROR:
     httpd_resp_send_500(req);
+    free(recv_buf);
+	delta_patch_free(writer);
     return ESP_OK;
 }
 

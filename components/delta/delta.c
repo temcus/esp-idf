@@ -22,6 +22,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "bootloader_common.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -42,6 +43,13 @@ typedef struct flash_mem {
     size_t patch_offset;
     esp_ota_handle_t ota_handle;
 } flash_mem_t;
+
+typedef struct delta_patch_writer {
+    const char *name;
+    const void *patch;
+    int offset;
+    int size;
+} delta_patch_writer_t;
 
 static int delta_flash_write_dest(void *arg_p, const uint8_t *buf_p, size_t size)
 {
@@ -129,13 +137,33 @@ static int delta_flash_seek_src(void *arg_p, int offset)
 
 static int delta_init_flash_mem(flash_mem_t *flash, const delta_opts_t *opts)
 {
-    if (!flash) {
+    if (!flash || !opts) {
         return -DELTA_PARTITION_ERROR;
     }
 
-    flash->src = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->src);
-    flash->dest = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->dest);
-    flash->patch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, opts->patch);
+    if (opts->src.type != DELTA_SRC_PARTITION ||
+        opts->dest.type != DELTA_SRC_PARTITION ||
+        opts->patch.type != DELTA_SRC_PARTITION) {
+        return -DELTA_PARTITION_ERROR;
+    }
+
+    if ((opts->src.where && !opts->dest.where) || (!opts->src.where && opts->dest.where)) {
+        return -DELTA_PARTITION_ERROR;
+    }
+
+    if (opts->src.where) {
+        flash->src = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->src.where);
+    } else {
+        flash->src = esp_ota_get_running_partition();
+    }
+
+    if (opts->dest.where) {
+        flash->dest = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->dest.where);
+    } else {
+        flash->dest = esp_ota_get_next_update_partition(NULL);
+    }
+
+    flash->patch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, opts->patch.where);
 
     if (flash->src == NULL || flash->dest == NULL || flash->patch == NULL) {
         return -DELTA_PARTITION_ERROR;
@@ -171,8 +199,30 @@ static int delta_set_boot_partition(flash_mem_t *flash)
     return DELTA_OK;
 }
 
-int delta_partition_init(delta_partition_writer_t *writer, const char *partition, int patch_size)
+int delta_compute_checksum(const delta_source_t source, char *checksum)
 {
+    if (source.type != DELTA_SRC_PARTITION || !source.where || strlen(source.where) == 0) {
+        return -DELTA_PARTITION_ERROR;
+    }
+
+    const esp_partition_t *partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+        ESP_PARTITION_SUBTYPE_ANY, source.where);
+    if (partition == NULL) {
+        return -DELTA_PARTITION_ERROR;
+    }
+
+    esp_err_t ret = bootloader_common_get_sha256_of_partition(partition->address,
+        partition->size, ESP_PARTITION_TYPE_APP, (uint8_t *)checksum);
+    if (ret != ESP_OK) {
+        return -DELTA_CHECKSUM_ERROR;
+    }
+
+    return DELTA_OK;
+}
+
+int delta_patch_init(delta_patch_writer_t **writer, const char *partition, int patch_size)
+{
+    delta_patch_writer_t *out = NULL;
     if (writer == NULL || partition == NULL) {
         return -DELTA_INVALID_ARGUMENT_ERROR;
     }
@@ -190,15 +240,22 @@ int delta_partition_init(delta_partition_writer_t *writer, const char *partition
         return ESP_FAIL;
     }
 
-    writer->name = partition;
-    writer->patch = patch;
-    writer->size = patch_size;
-    writer->offset = 0;
+    out = malloc(sizeof(delta_patch_writer_t));
+    if (!out) {
+        return -DELTA_OUT_OF_MEMORY;
+    }
+
+    out->name = partition;
+    out->patch = patch;
+    out->size = patch_size;
+    out->offset = 0;
+
+    *writer = out;
 
     return ESP_OK;
 }
 
-int delta_partition_write(delta_partition_writer_t *writer, const char *buf, int size)
+int delta_patch_write(delta_patch_writer_t *writer, const char *buf, int size)
 {
     if (writer == NULL || buf == NULL) {
         return -DELTA_INVALID_ARGUMENT_ERROR;
@@ -217,13 +274,14 @@ int delta_partition_write(delta_partition_writer_t *writer, const char *buf, int
     return ESP_OK;
 }
 
-int delta_check_and_apply(int patch_size, const delta_opts_t *opts)
+void delta_patch_free(delta_patch_writer_t *writer)
 {
-    static const delta_opts_t DEFAULT_DELTA_OPTS = {
-        .src = DEFAULT_PARTITION_LABEL_SRC,
-        .dest = DEFAULT_PARTITION_LABEL_DEST,
-        .patch = DEFAULT_PARTITION_LABEL_PATCH
-    };
+    free(writer);
+}
+
+int delta_check_and_apply(int patch_size, const delta_opts_t *opts, const char *digest)
+{
+    static const delta_opts_t DEFAULT_DELTA_OPTS = INIT_DEFAULT_DELTA_OPTS();
 
     ESP_LOGI(TAG, "Initializing delta update...");
 
@@ -256,6 +314,17 @@ int delta_check_and_apply(int patch_size, const delta_opts_t *opts)
 
         if (ret <= 0) {
             return ret;
+        }
+
+        if (digest) {
+            char new_digest[32];
+            if (delta_compute_checksum(opts->dest, new_digest) != ESP_OK) {
+                return ret;
+            }
+
+            if (memcmp(digest, new_digest, sizeof(new_digest)) != 0) {
+                return -DELTA_CHECKSUM_ERROR;
+            }
         }
 
         ESP_LOGI(TAG, "Patch Successful!!!");
