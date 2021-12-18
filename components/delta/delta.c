@@ -35,7 +35,7 @@
 
 static const char *TAG = "delta";
 
-typedef struct flash_mem {
+typedef struct delta_patcher {
 	union {
 		struct {
     		const esp_partition_t *partition;
@@ -59,7 +59,7 @@ typedef struct flash_mem {
 	detools_seek_t seek_src;
 	detools_read_t read_patch;
 	detools_write_t write_dest;
-} flash_mem_t;
+} delta_patcher_t;
 
 typedef struct delta_patch_writer {
     const char *name;
@@ -70,17 +70,17 @@ typedef struct delta_patch_writer {
 
 static int delta_flash_write_dest(void *arg_p, const uint8_t *buf_p, size_t size)
 {
-    flash_mem_t *flash;
-    flash = (flash_mem_t *)arg_p;
+    delta_patcher_t *patcher;
+    patcher = (delta_patcher_t *)arg_p;
 
-    if (!flash) {
+    if (!patcher) {
         return -DELTA_CASTING_ERROR;
     }
     if (size <= 0) {
         return -DELTA_INVALID_BUF_SIZE;
     }
 
-    if (esp_ota_write(flash->dest.flash.ota_handle, buf_p, size) != ESP_OK) {
+    if (esp_ota_write(patcher->dest.flash.ota_handle, buf_p, size) != ESP_OK) {
         return -DELTA_WRITING_ERROR;
     }
 
@@ -89,22 +89,22 @@ static int delta_flash_write_dest(void *arg_p, const uint8_t *buf_p, size_t size
 
 static int delta_flash_read_src(void *arg_p, uint8_t *buf_p, size_t size)
 {
-    flash_mem_t *flash;
-    flash = (flash_mem_t *)arg_p;
+    delta_patcher_t *patcher;
+    patcher = (delta_patcher_t *)arg_p;
 
-    if (!flash) {
+    if (!patcher) {
         return -DELTA_CASTING_ERROR;
     }
     if (size <= 0) {
         return -DELTA_INVALID_BUF_SIZE;
     }
 
-    if (esp_partition_read(flash->src.flash.partition, flash->src.flash.offset, buf_p, size) != ESP_OK) {
+    if (esp_partition_read(patcher->src.flash.partition, patcher->src.flash.offset, buf_p, size) != ESP_OK) {
         return -DELTA_READING_SOURCE_ERROR;
     }
 
-    flash->src.flash.offset += size;
-    if (flash->src.flash.offset >= flash->src.flash.partition->size) {
+    patcher->src.flash.offset += size;
+    if (patcher->src.flash.offset >= patcher->src.flash.partition->size) {
         return -DELTA_OUT_OF_MEMORY;
     }
 
@@ -113,22 +113,22 @@ static int delta_flash_read_src(void *arg_p, uint8_t *buf_p, size_t size)
 
 static int delta_flash_read_patch(void *arg_p, uint8_t *buf_p, size_t size)
 {
-    flash_mem_t *flash;
-    flash = (flash_mem_t *)arg_p;
+    delta_patcher_t *patcher;
+    patcher = (delta_patcher_t *)arg_p;
 
-    if (!flash) {
+    if (!patcher) {
         return -DELTA_CASTING_ERROR;
     }
     if (size <= 0) {
         return -DELTA_INVALID_BUF_SIZE;
     }
 
-    if (esp_partition_read(flash->patch.flash.partition, flash->patch.flash.offset, buf_p, size) != ESP_OK) {
+    if (esp_partition_read(patcher->patch.flash.partition, patcher->patch.flash.offset, buf_p, size) != ESP_OK) {
         return -DELTA_READING_PATCH_ERROR;
     }
 
-    flash->patch.flash.offset += size;
-    if (flash->patch.flash.offset >= flash->patch.flash.partition->size) {
+    patcher->patch.flash.offset += size;
+    if (patcher->patch.flash.offset >= patcher->patch.flash.partition->size) {
         return -DELTA_READING_PATCH_ERROR;
     }
 
@@ -137,24 +137,24 @@ static int delta_flash_read_patch(void *arg_p, uint8_t *buf_p, size_t size)
 
 static int delta_flash_seek_src(void *arg_p, int offset)
 {
-    flash_mem_t *flash;
-    flash = (flash_mem_t *)arg_p;
+    delta_patcher_t *patcher;
+    patcher = (delta_patcher_t *)arg_p;
 
-    if (!flash) {
+    if (!patcher) {
         return -DELTA_CASTING_ERROR;
     }
 
-    flash->src.flash.offset += offset;
-    if (flash->src.flash.offset >= flash->src.flash.partition->size) {
+    patcher->src.flash.offset += offset;
+    if (patcher->src.flash.offset >= patcher->src.flash.partition->size) {
         return -DELTA_SEEKING_ERROR;
     }
 
     return DELTA_OK;
 }
 
-static int delta_init_flash_mem(flash_mem_t *flash, const delta_opts_t *opts)
+static int delta_patcher_init(delta_patcher_t *patcher, const delta_opts_t *opts)
 {
-    if (!flash || !opts) {
+    if (!patcher || !opts) {
         return -DELTA_PARTITION_ERROR;
     }
 
@@ -169,49 +169,49 @@ static int delta_init_flash_mem(flash_mem_t *flash, const delta_opts_t *opts)
     }
 
     if (opts->src.where) {
-        flash->src.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->src.where);
+        patcher->src.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->src.where);
     } else {
-        flash->src.flash.partition = esp_ota_get_running_partition();
+        patcher->src.flash.partition = esp_ota_get_running_partition();
     }
 
     if (opts->dest.where) {
-        flash->dest.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->dest.where);
+        patcher->dest.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->dest.where);
     } else {
-        flash->dest.flash.partition = esp_ota_get_next_update_partition(NULL);
+        patcher->dest.flash.partition = esp_ota_get_next_update_partition(NULL);
     }
 
-    flash->patch.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, opts->patch.where);
+    patcher->patch.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, opts->patch.where);
 
-    if (flash->src.flash.partition == NULL || flash->dest.flash.partition == NULL || flash->patch.flash.partition == NULL) {
+    if (patcher->src.flash.partition == NULL || patcher->dest.flash.partition == NULL || patcher->patch.flash.partition == NULL) {
         return -DELTA_PARTITION_ERROR;
     }
 
-    if (flash->src.flash.partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX ||
-        flash->dest.flash.partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
+    if (patcher->src.flash.partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX ||
+        patcher->dest.flash.partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
         return -DELTA_PARTITION_ERROR;
     }
 
-    if (esp_ota_begin(flash->dest.flash.partition, OTA_SIZE_UNKNOWN, &(flash->dest.flash.ota_handle)) != ESP_OK) {
+    if (esp_ota_begin(patcher->dest.flash.partition, OTA_SIZE_UNKNOWN, &(patcher->dest.flash.ota_handle)) != ESP_OK) {
         return -DELTA_PARTITION_ERROR;
     }
     esp_log_level_set("esp_image", ESP_LOG_ERROR);
 
-    flash->src.flash.offset = 0;
-    flash->patch.flash.offset = 0;
-	flash->read_src = delta_flash_read_src;
-	flash->seek_src = delta_flash_seek_src;
-	flash->read_patch = delta_flash_read_patch;
-	flash->write_dest = delta_flash_write_dest;
+    patcher->src.flash.offset = 0;
+    patcher->patch.flash.offset = 0;
+	patcher->read_src = delta_flash_read_src;
+	patcher->seek_src = delta_flash_seek_src;
+	patcher->read_patch = delta_flash_read_patch;
+	patcher->write_dest = delta_flash_write_dest;
 
     return DELTA_OK;
 }
 
-static int delta_set_boot_partition(flash_mem_t *flash)
+static int delta_set_boot_partition(delta_patcher_t *patcher)
 {
-    if (esp_ota_set_boot_partition(flash->dest.flash.partition) != ESP_OK) {
+    if (esp_ota_set_boot_partition(patcher->dest.flash.partition) != ESP_OK) {
         return -DELTA_TARGET_IMAGE_ERROR;
     }
-    free(flash);
+    free(patcher);
 
     const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
     ESP_LOGI(TAG, "Next Boot Partition: Subtype %d at Offset 0x%x", boot_partition->subtype, boot_partition->address);
@@ -306,14 +306,14 @@ int delta_check_and_apply(int patch_size, const delta_opts_t *opts, const char *
 
     ESP_LOGI(TAG, "Initializing delta update...");
 
-    flash_mem_t *flash = NULL;
+    delta_patcher_t *patcher = NULL;
     int ret = 0;
 
     if (patch_size < 0) {
         return patch_size;
     } else if (patch_size > 0) {
-        flash = calloc(1, sizeof(flash_mem_t));
-        if (!flash) {
+        patcher = calloc(1, sizeof(delta_patcher_t));
+        if (!patcher) {
             return -DELTA_OUT_OF_MEMORY;
         }
 
@@ -321,23 +321,23 @@ int delta_check_and_apply(int patch_size, const delta_opts_t *opts, const char *
             opts = &DEFAULT_DELTA_OPTS;
         }
 
-        ret = delta_init_flash_mem(flash, opts);
+        ret = delta_patcher_init(patcher, opts);
         if (ret) {
             return ret;
         }
 
-        ret = detools_apply_patch_callbacks(flash->read_src,
-                                            flash->seek_src,
-                                            flash->read_patch,
+        ret = detools_apply_patch_callbacks(patcher->read_src,
+                                            patcher->seek_src,
+                                            patcher->read_patch,
                                             (size_t) patch_size,
-                                            flash->write_dest,
-                                            flash);
+                                            patcher->write_dest,
+                                            patcher);
 
         if (ret <= 0) {
             return ret;
         }
 
-		ret = esp_ota_end(flash->dest.flash.ota_handle);
+		ret = esp_ota_end(patcher->dest.flash.ota_handle);
 		if (ret != ESP_OK) {
         	return ret;
 		}
@@ -354,7 +354,7 @@ int delta_check_and_apply(int patch_size, const delta_opts_t *opts, const char *
         }
 
         ESP_LOGI(TAG, "Patch Successful!!!");
-        return delta_set_boot_partition(flash);
+        return delta_set_boot_partition(patcher);
     }
 
     return 0;
@@ -382,7 +382,7 @@ const char *delta_error_as_string(int error)
     case DELTA_SEEKING_ERROR:
         return "Seek error: source image.";
     case DELTA_CASTING_ERROR:
-        return "Error casting to flash_mem_t.";
+        return "Error casting to patcher.";
     case DELTA_INVALID_BUF_SIZE:
         return "Read/write buffer less or equal to 0.";
     case DELTA_CLEARING_ERROR:
