@@ -243,9 +243,10 @@ static int delta_set_boot_partition(delta_patcher_t *patcher)
 
 int delta_compute_checksum(const delta_source_t source, char *checksum)
 {
-    if (source.type != DELTA_SRC_PARTITION || !source.where || strlen(source.where) == 0) {
-        return -DELTA_PARTITION_ERROR;
-    }
+	delta_assert(source.where && strlen(source.where) > 0);
+
+	/* TODO: support files as well! */
+	delta_assert(source.type == DELTA_SRC_PARTITION);
 
     const esp_partition_t *partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
         ESP_PARTITION_SUBTYPE_ANY, source.where);
@@ -361,13 +362,12 @@ int delta_check_and_apply(int patch_size, const delta_opts_t *opts, const char *
 
     ESP_LOGI(TAG, "Initializing delta update...");
 
-    delta_patcher_t *patcher = NULL;
     int ret = 0;
 
     if (patch_size < 0) {
         return patch_size;
     } else if (patch_size > 0) {
-        patcher = calloc(1, sizeof(delta_patcher_t));
+        delta_patcher_t *patcher = calloc(1, sizeof(delta_patcher_t));
         if (!patcher) {
             return -DELTA_OUT_OF_MEMORY;
         }
