@@ -1,0 +1,10 @@
+menu "sif"
+	config SIF_PAGE_SIZE
+		int "page size"
+		default 4096
+		range 512 4096
+		help
+			Page size to use for writes. Using a value of 4096
+			should give the best flash wear, but if memory is at
+			a premium, set this lower
+endmenu
