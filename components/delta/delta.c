@@ -45,6 +45,7 @@ typedef struct flash_mem {
 	union {
 		struct {
     		const esp_partition_t *partition;
+    		esp_ota_handle_t ota_handle;
 		} flash;
 	} dest;
 	union {
@@ -58,7 +59,6 @@ typedef struct flash_mem {
 	detools_seek_t seek_src;
 	detools_read_t read_patch;
 	detools_write_t write_dest;
-    esp_ota_handle_t ota_handle;
 } flash_mem_t;
 
 typedef struct delta_patch_writer {
@@ -80,7 +80,7 @@ static int delta_flash_write_dest(void *arg_p, const uint8_t *buf_p, size_t size
         return -DELTA_INVALID_BUF_SIZE;
     }
 
-    if (esp_ota_write(flash->ota_handle, buf_p, size) != ESP_OK) {
+    if (esp_ota_write(flash->dest.flash.ota_handle, buf_p, size) != ESP_OK) {
         return -DELTA_WRITING_ERROR;
     }
 
@@ -191,7 +191,7 @@ static int delta_init_flash_mem(flash_mem_t *flash, const delta_opts_t *opts)
         return -DELTA_PARTITION_ERROR;
     }
 
-    if (esp_ota_begin(flash->dest.flash.partition, OTA_SIZE_UNKNOWN, &(flash->ota_handle)) != ESP_OK) {
+    if (esp_ota_begin(flash->dest.flash.partition, OTA_SIZE_UNKNOWN, &(flash->dest.flash.ota_handle)) != ESP_OK) {
         return -DELTA_PARTITION_ERROR;
     }
     esp_log_level_set("esp_image", ESP_LOG_ERROR);
