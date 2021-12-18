@@ -15,6 +15,7 @@
  *
  */
 
+#include <assert.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -32,6 +33,10 @@
 
 #include "detools.h"
 #include "delta.h"
+
+#ifndef delta_assert
+#define delta_assert(cond) assert(cond)
+#endif
 
 static const char *TAG = "delta";
 
@@ -68,17 +73,34 @@ typedef struct delta_patch_writer {
     int size;
 } delta_patch_writer_t;
 
+static int delta_file_write_dest(void *arg_p, const uint8_t *buf_p, size_t size)
+{
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
+	return DELTA_OK;
+}
+
+static int delta_file_read_src(void *arg_p, uint8_t *buf_p, size_t size)
+{
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
+	return DELTA_OK;
+}
+
+static int delta_file_read_patch(void *arg_p, uint8_t *buf_p, size_t size)
+{
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
+	return DELTA_OK;
+}
+
+static int delta_file_seek_src(void *arg_p, int offset)
+{
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
+	return DELTA_OK;
+}
+
 static int delta_flash_write_dest(void *arg_p, const uint8_t *buf_p, size_t size)
 {
-    delta_patcher_t *patcher;
-    patcher = (delta_patcher_t *)arg_p;
-
-    if (!patcher) {
-        return -DELTA_CASTING_ERROR;
-    }
-    if (size <= 0) {
-        return -DELTA_INVALID_BUF_SIZE;
-    }
+	delta_assert(arg_p && buf_p && size > 0);
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
 
     if (esp_ota_write(patcher->dest.flash.ota_handle, buf_p, size) != ESP_OK) {
         return -DELTA_WRITING_ERROR;
@@ -89,15 +111,8 @@ static int delta_flash_write_dest(void *arg_p, const uint8_t *buf_p, size_t size
 
 static int delta_flash_read_src(void *arg_p, uint8_t *buf_p, size_t size)
 {
-    delta_patcher_t *patcher;
-    patcher = (delta_patcher_t *)arg_p;
-
-    if (!patcher) {
-        return -DELTA_CASTING_ERROR;
-    }
-    if (size <= 0) {
-        return -DELTA_INVALID_BUF_SIZE;
-    }
+	delta_assert(arg_p && buf_p && size > 0);
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
 
     if (esp_partition_read(patcher->src.flash.partition, patcher->src.flash.offset, buf_p, size) != ESP_OK) {
         return -DELTA_READING_SOURCE_ERROR;
@@ -113,15 +128,8 @@ static int delta_flash_read_src(void *arg_p, uint8_t *buf_p, size_t size)
 
 static int delta_flash_read_patch(void *arg_p, uint8_t *buf_p, size_t size)
 {
-    delta_patcher_t *patcher;
-    patcher = (delta_patcher_t *)arg_p;
-
-    if (!patcher) {
-        return -DELTA_CASTING_ERROR;
-    }
-    if (size <= 0) {
-        return -DELTA_INVALID_BUF_SIZE;
-    }
+	delta_assert(arg_p && buf_p && size > 0);
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
 
     if (esp_partition_read(patcher->patch.flash.partition, patcher->patch.flash.offset, buf_p, size) != ESP_OK) {
         return -DELTA_READING_PATCH_ERROR;
@@ -137,12 +145,8 @@ static int delta_flash_read_patch(void *arg_p, uint8_t *buf_p, size_t size)
 
 static int delta_flash_seek_src(void *arg_p, int offset)
 {
-    delta_patcher_t *patcher;
-    patcher = (delta_patcher_t *)arg_p;
-
-    if (!patcher) {
-        return -DELTA_CASTING_ERROR;
-    }
+	delta_assert(arg_p);
+    delta_patcher_t *patcher = (delta_patcher_t *)arg_p;
 
     patcher->src.flash.offset += offset;
     if (patcher->src.flash.offset >= patcher->src.flash.partition->size) {
