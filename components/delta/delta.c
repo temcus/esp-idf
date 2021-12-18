@@ -46,19 +46,33 @@ typedef struct delta_patcher {
     		const esp_partition_t *partition;
 			size_t offset;
 		} flash;
+		struct {
+			int fd;
+			size_t offset;
+		} file;
 	} src;
 	union {
 		struct {
     		const esp_partition_t *partition;
     		esp_ota_handle_t ota_handle;
 		} flash;
+		struct {
+			int fd;
+			size_t offset;
+		} file;
 	} dest;
 	union {
 		struct {
     		const esp_partition_t *partition;
 			size_t offset;
 		} flash;
+		struct {
+			int fd;
+			size_t offset;
+		} file;
 	} patch;
+
+	delta_opts_t opts;
 
 	detools_read_t read_src;
 	detools_seek_t seek_src;
@@ -66,12 +80,12 @@ typedef struct delta_patcher {
 	detools_write_t write_dest;
 } delta_patcher_t;
 
-typedef struct delta_patch_writer {
+struct delta_patch_writer {
     const char *name;
     const void *patch;
     int offset;
     int size;
-} delta_patch_writer_t;
+};
 
 static int delta_file_write_dest(void *arg_p, const uint8_t *buf_p, size_t size)
 {
@@ -200,6 +214,7 @@ static int delta_patcher_init(delta_patcher_t *patcher, const delta_opts_t *opts
     }
     esp_log_level_set("esp_image", ESP_LOG_ERROR);
 
+	memcpy(&patcher->opts, opts, sizeof(*opts));
     patcher->src.flash.offset = 0;
     patcher->patch.flash.offset = 0;
 	patcher->read_src = delta_flash_read_src;
