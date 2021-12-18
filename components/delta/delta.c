@@ -180,19 +180,13 @@ static int delta_flash_seek_src(void *arg_p, int offset)
 
 static int delta_patcher_init(delta_patcher_t *patcher, const delta_opts_t *opts)
 {
-    if (!patcher || !opts) {
-        return -DELTA_PARTITION_ERROR;
-    }
+	delta_assert(patcher && opts);
 
-    if (opts->src.type != DELTA_SRC_PARTITION ||
-        opts->dest.type != DELTA_SRC_PARTITION ||
-        opts->patch.type != DELTA_SRC_PARTITION) {
-        return -DELTA_PARTITION_ERROR;
-    }
+    delta_assert(opts->src.type == DELTA_SRC_PARTITION &&
+        opts->dest.type == DELTA_SRC_PARTITION &&
+        opts->patch.type == DELTA_SRC_PARTITION);
 
-    if ((opts->src.where && !opts->dest.where) || (!opts->src.where && opts->dest.where)) {
-        return -DELTA_PARTITION_ERROR;
-    }
+    delta_assert((opts->src.where && opts->dest.where) || (!opts->src.where && !opts->dest.where));
 
     if (opts->src.where) {
         patcher->src.flash.partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, opts->src.where);
