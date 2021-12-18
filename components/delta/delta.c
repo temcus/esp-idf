@@ -20,6 +20,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -82,9 +86,13 @@ typedef struct delta_patcher {
 
 struct delta_patch_writer {
     const char *name;
-    const void *patch;
+	union {
+    	const void *flash;
+		int fd;
+	};
     int offset;
     int size;
+	delta_source_t type;
 };
 
 static int delta_file_write_dest(void *arg_p, const uint8_t *buf_p, size_t size)
@@ -262,53 +270,81 @@ int delta_compute_checksum(const delta_source_t source, char *checksum)
 
 int delta_patch_init(delta_patch_writer_t **writer, const char *partition, int patch_size)
 {
-    delta_patch_writer_t *out = NULL;
-    if (writer == NULL || partition == NULL) {
-        return -DELTA_INVALID_ARGUMENT_ERROR;
-    }
+	esp_err_t res = ESP_OK;
 
-    const esp_partition_t *patch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-        ESP_PARTITION_SUBTYPE_DATA_SPIFFS, partition);
-    if (patch == NULL) {
-        ESP_LOGE(TAG, "Partition Error: Could not find '%s' partition", partition);
-        return ESP_FAIL;
-    }
+	delta_assert(writer && partition && patch_size > 0);
+	delta_assert(strlen(partition) > 0);
 
-    size_t patch_page_size = (patch_size + PARTITION_PAGE_SIZE) - (patch_size % PARTITION_PAGE_SIZE);
-    if (esp_partition_erase_range(patch, 0, patch_page_size) != ESP_OK) {
-        ESP_LOGE(TAG, "Partition Error: Could not erase '%s' region!", partition);
-        return ESP_FAIL;
-    }
-
-    out = malloc(sizeof(delta_patch_writer_t));
+	delta_patch_writer_t *out = malloc(sizeof(delta_patch_writer_t));
     if (!out) {
         return -DELTA_OUT_OF_MEMORY;
     }
 
-    out->name = partition;
-    out->patch = patch;
-    out->size = patch_size;
     out->offset = 0;
+    out->size = patch_size;
+    out->name = partition;
+	out->type.where = partition;
+
+	if (partition[0] == '/') {
+		out->type.type = DELTA_SRC_FILE;
+
+		int fd = open(out->name, O_CREAT|O_TRUNC|O_RDWR);
+		if (fd < 0) {
+			ESP_LOGE(TAG, "could not open file '%s': %d", out->name, errno);
+			res = ESP_FAIL;
+			goto ERROR;
+		}
+
+		out->fd = fd;
+
+	} else {
+		out->type.type = DELTA_SRC_PARTITION;
+
+		const esp_partition_t *flash = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+			ESP_PARTITION_SUBTYPE_DATA_SPIFFS, out->name);
+		if (flash == NULL) {
+			ESP_LOGE(TAG, "could not find '%s' partition", out->name);
+			res = ESP_FAIL;
+			goto ERROR;
+		}
+
+		size_t page_size = (patch_size + PARTITION_PAGE_SIZE) - (patch_size % PARTITION_PAGE_SIZE);
+		res = esp_partition_erase_range(flash, 0, page_size);
+		if (res != ESP_OK) {
+			ESP_LOGE(TAG, "could not erase '%s' region!", out->name);
+			goto ERROR;
+		}
+
+		out->flash = flash;
+	}
 
     *writer = out;
+	return res;
 
-    return ESP_OK;
+ERROR:
+	free(out);
+    return res;
 }
 
 int delta_patch_write(delta_patch_writer_t *writer, const char *buf, int size)
 {
-    if (writer == NULL || buf == NULL) {
-        return -DELTA_INVALID_ARGUMENT_ERROR;
-    }
+	delta_assert(writer && buf);
 
     if (writer->offset >= writer->size) {
         return -DELTA_OUT_OF_BOUNDS_ERROR;
     }
 
-    if (esp_partition_write(writer->patch, writer->offset, buf, size) != ESP_OK) {
-        ESP_LOGE(TAG, "Partition Error: Could not write to '%s' region!", writer->name);
-        return ESP_FAIL;
-    };
+	if (writer->type.type == DELTA_SRC_PARTITION) {
+		if (esp_partition_write(writer->flash, writer->offset, buf, size) != ESP_OK) {
+			ESP_LOGE(TAG, "could not write to partition '%s'", writer->name);
+			return ESP_FAIL;
+		}
+	} else {
+		if (write(writer->fd, buf, size) < 0) {
+			ESP_LOGE(TAG, "could not write to file '%s'", writer->name);
+			return ESP_FAIL;
+		}
+	}
 
     writer->offset += size;
     return ESP_OK;
@@ -316,6 +352,12 @@ int delta_patch_write(delta_patch_writer_t *writer, const char *buf, int size)
 
 void delta_patch_free(delta_patch_writer_t *writer)
 {
+	if (writer) {
+		if (writer->type.type == DELTA_SRC_FILE) {
+			close(writer->fd);
+		}
+	}
+
     free(writer);
 }
 
