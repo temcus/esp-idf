@@ -337,6 +337,11 @@ int delta_check_and_apply(int patch_size, const delta_opts_t *opts, const char *
             return ret;
         }
 
+		ret = esp_ota_end(flash->dest.flash.ota_handle);
+		if (ret != ESP_OK) {
+        	return ret;
+		}
+
         if (digest) {
             char new_digest[32];
             if (delta_compute_checksum(opts->dest, new_digest) != ESP_OK) {
